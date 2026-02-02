@@ -3,7 +3,11 @@ const std = @import("std");
 fn link_windows_system_libraries(comptime T: type, mod: *T, is_gnu: bool) void {
     const linkSystemLibrary = switch (T) {
         std.Build.Module => std.Build.Module.linkSystemLibrary,
-        std.Build.Step.Compile => std.Build.Step.Compile.linkSystemLibrary2,
+        std.Build.Step.Compile => (struct {
+            fn link(c: *std.Build.Step.Compile, name: []const u8, options: std.Build.Module.LinkSystemLibraryOptions) void {
+                c.root_module.linkSystemLibrary(name, options);
+            }
+        }).link,
         else => @compileError("Provided type must either be std.Build.Module or std.Build.Step.Compile"),
     };
 
@@ -38,9 +42,9 @@ fn link_windows_system_libraries(comptime T: type, mod: *T, is_gnu: bool) void {
 }
 
 fn link_mac_frameworks(mod: *std.Build.Step.Compile) void {
-    mod.linkFramework("Foundation");
-    mod.linkFramework("QuartzCore");
-    mod.linkFramework("Metal");
+    mod.root_module.linkFramework("Foundation", .{});
+    mod.root_module.linkFramework("QuartzCore", .{});
+    mod.root_module.linkFramework("Metal", .{});
 }
 
 const WGPUBuildContext = struct {
@@ -218,8 +222,8 @@ const WGPUBuildContext = struct {
 
 fn dynamic_link(context: *const WGPUBuildContext, c: *std.Build.Step.Compile, cmd: *std.Build.Step.Run) void {
     if (!context.is_windows) {
-        c.addLibraryPath(context.wgpu_dep.path("lib"));
-        c.linkSystemLibrary2("wgpu_native", .{});
+        c.root_module.addLibraryPath(context.wgpu_dep.path("lib"));
+        c.root_module.linkSystemLibrary("wgpu_native", .{});
     }
     cmd.addPathDir(context.install_lib_dir);
 }
@@ -292,12 +296,12 @@ fn unit_tests(b: *std.Build, context: *const WGPUBuildContext) void {
         });
         handle_rt(context, t);
         if (context.libwgpu_path != null) {
-            t.addObjectFile(context.libwgpu_path.?);
+            t.root_module.addObjectFile(context.libwgpu_path.?);
         }
         if (context.is_windows) {
-            t.linkLibC();
+            t.root_module.link_libc = true;
         } else {
-            t.linkLibCpp();
+            t.root_module.link_libcpp = true;
         }
 
         const run_test = b.addRunArtifact(t);
@@ -313,7 +317,7 @@ fn unit_tests(b: *std.Build, context: *const WGPUBuildContext) void {
                 link_windows_system_libraries(std.Build.Step.Compile, t, true);
 
                 // TODO: Find out why this is only required here; seems suspicious
-                t.linkSystemLibrary2("unwind", .{});
+                t.root_module.linkSystemLibrary("unwind", .{});
             } else {
                 link_windows_system_libraries(std.Build.Step.Compile, t, false);
             }
